@@ -8,3 +8,12 @@ node_modules
 *.tsbuildinfo
 next-env.d.ts
 .vercel
+
+# Brand assets — clients drop their own logos here. Keep them out of the
+# template repo so each instance ships with only the bot owner's branding.
+public/*.webp
+public/*.png
+public/*.jpg
+public/*.jpeg
+public/*.svg
+!public/.gitkeep

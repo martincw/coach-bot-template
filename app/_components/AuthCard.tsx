@@ -56,12 +56,34 @@ export function AuthCard({ mode, nextPath }: { mode: 'login' | 'signup'; nextPat
       }}
     >
       <div style={{ width: '100%', maxWidth: 400, position: 'relative' }}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={BRAND.logoSrc}
-          alt={BRAND.name}
-          style={{ width: 'min(280px, 70%)', height: 'auto', display: 'block', margin: '0 auto 24px' }}
-        />
+        {BRAND.logoSrc ? (
+          /* eslint-disable-next-line @next/next/no-img-element */
+          <img
+            src={BRAND.logoSrc}
+            alt={BRAND.name}
+            style={{ width: 'min(280px, 70%)', height: 'auto', display: 'block', margin: '0 auto 24px' }}
+          />
+        ) : (
+          <div
+            style={{
+              fontFamily: '"Cormorant Garamond", "Playfair Display", Georgia, serif',
+              fontWeight: 700,
+              fontSize: 'clamp(24px, 6vw, 44px)',
+              letterSpacing: '0.04em',
+              lineHeight: 1,
+              background:
+                'linear-gradient(180deg, #c8a25f 0%, #f3dba1 30%, #b88746 55%, #f5e4b3 75%, #a87a3d 100%)',
+              WebkitBackgroundClip: 'text',
+              backgroundClip: 'text',
+              color: 'transparent',
+              textAlign: 'center',
+              textTransform: 'uppercase',
+              margin: '0 0 24px',
+            }}
+          >
+            {BRAND.name}
+          </div>
+        )}
         <h1 style={{ textAlign: 'center', fontSize: 22, fontWeight: 600, margin: '0 0 24px' }}>
           {mode === 'login' ? BRAND.loginHeading : BRAND.signupHeading}
         </h1>

@@ -21,8 +21,15 @@ export const BRAND = {
   /** Short subhead under the bot's name on the chat hero. */
   tagline: 'Your Vortex coach',
 
-  /** Path to the logo image, served from /public. Use .webp for size, .png/.svg also fine. */
-  logoSrc: '/living-brave-logo.webp',
+  /**
+   * Path to your logo image, served from /public. Use .webp for size, .png/.svg also fine.
+   * If you leave this empty (''), the bot renders a gold-gradient wordmark of `name`
+   * instead — looks polished without needing a logo file.
+   *
+   * To use your own logo: drop the file at `public/your-logo.webp` and set
+   * logoSrc to '/your-logo.webp'. (Logo files are gitignored — see .gitignore.)
+   */
+  logoSrc: '',
 
   /** Where the "Back to Dashboard" sidebar link goes. */
   dashboardUrl: 'https://livingbraveai.com/dashboard',
