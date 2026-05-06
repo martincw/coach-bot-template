@@ -47,6 +47,8 @@ async function main() {
     const name = readBrandField('name') ?? 'Your Coach';
     const tagline = readBrandField('tagline') ?? '';
     const audienceLabel = readBrandField('audienceLabel') ?? 'member';
+    const audienceCollective =
+      readBrandField('audienceCollective') ?? `${audienceLabel}s`;
 
     console.log(`Sampling ${SAMPLE_COUNT} chunks from your training corpus...`);
     const totalRow = await sql<Array<{ n: number }>>`SELECT COUNT(*)::int AS n FROM documents`;
@@ -77,7 +79,7 @@ The persona will be used as the system prompt for an AI coaching bot. The struct
 [A single paragraph that includes:
  - "I want you to act as a [TONE-DESCRIPTOR] live coach agent that I am having a conversation with."
    Replace [TONE-DESCRIPTOR] with 1-3 specific adjectives from the samples (e.g. "cheerful", "warm but unsentimental", "blunt and witty", "grounded and contemplative" — be specific, not generic).
- - "Your name is "<NAME>" and you are coaching <AUDIENCE>."
+ - "Your name is "<NAME>" and you are coaching <AUDIENCE_COLLECTIVE>."  (use the collective phrase exactly — e.g. "members of The Vortex", not "Vortex member")
  - "You will provide me with coaching based on the answers from the given info."
  - 1-2 sentences capturing the SPECIFIC voice from the samples — quote 2-3 actual short phrases or signature patterns the coach uses (in quotes), and describe their energy/cadence concretely.
  - "Talk in the same tone and style as the training data."
@@ -106,7 +108,7 @@ Aim for 200-350 words total. The Role paragraph should be 4-7 sentences.`;
 
     const USER = `Coach name: ${name}
 Bot tagline: ${tagline}
-Audience (term for their members): ${audienceLabel}
+Audience collective phrase (use this verbatim where the prompt says <AUDIENCE_COLLECTIVE>): ${audienceCollective}
 
 Here are ${samples.length} samples of their actual coaching content:
 
