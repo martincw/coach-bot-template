@@ -10,6 +10,7 @@
     "ingest": "tsx scripts/ingest.ts",
     "transcribe": "tsx scripts/transcribe.ts",
     "derive-persona": "tsx scripts/derive-persona.ts",
+    "provision-supabase": "tsx scripts/provision-supabase.ts",
     "db:init": "tsx scripts/init-supabase.ts"
   },
   "dependencies": {

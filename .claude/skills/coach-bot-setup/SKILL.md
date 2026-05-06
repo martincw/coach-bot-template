@@ -122,43 +122,45 @@ After all fields gathered, **YOU write `lib/brand.ts`** using Edit with all the 
 
 Three accounts to set up. Walk them through one at a time.
 
-#### Supabase (database + auth)
+#### Supabase (database + auth) — auto-provisioned
 
 Tell them:
 > "Supabase is where your bot's data lives — user accounts, chat history, training material. Free tier is plenty for thousands of users.
 >
-> 1. Go to https://supabase.com and sign up (use Google or GitHub for fastest signup).
-> 2. Click 'New Project'.
-> 3. Name it whatever (e.g. 'shosh-ai-prod'). Pick the region closest to you.
-> 4. **WRITE DOWN THE DATABASE PASSWORD** when it shows it to you — it's only shown once. Save it somewhere safe.
-> 5. Click 'Create new project' and wait ~1 minute for it to finish provisioning.
+> Instead of having you click through their dashboard for 5 minutes, I'm going to provision everything for you with one access token. Here's all you have to do:
 >
-> Tell me when the project is ready."
-
-Once they say it's ready:
-
-> "Great. Now I need 4 values from your Supabase dashboard. I'll tell you exactly where to click for each one.
+> 1. Go to https://supabase.com and sign up (Google or GitHub login = fastest).
+> 2. Once you're signed in, go to https://supabase.com/dashboard/account/tokens
+> 3. Click **'Generate new token'**, give it a name like 'coach-bot-setup', and click Generate.
+> 4. **Copy the token** (it starts with `sbp_`) and paste it here.
 >
-> **First**: Click 'Project Settings' (gear icon, bottom left) → 'API' (in the sidebar). You'll see two values I need. Paste them both here, separated by a space or new lines:
-> - 'Project URL' (looks like `https://abcdefg.supabase.co`)
-> - 'anon public' API key (the one labeled `sb_publishable_...`)"
+> I'll handle creating the project, generating a database password, fetching all the keys, and wiring it all up."
 
-When they paste, parse out the URL and anon key.
+When they paste the token, run via Bash:
+```bash
+SUPABASE_ACCESS_TOKEN=<the-token-they-pasted> bun run provision-supabase
+```
 
-> "Got it. Now for the database connection.
->
-> **Second**: In Project Settings → 'Database' → scroll down to 'Connection string'. There are tabs at the top. Click the **'Transaction pooler'** tab. Click 'Reveal' or 'Show password' if there's a button. Then copy the WHOLE string and paste it here.
->
-> Don't worry if it has `[YOUR-PASSWORD]` in it — I'll handle that."
+This script:
+- Creates a new Supabase project (default name: "coach-bot-prod", region: us-east-1)
+- Generates a strong DB password (URL-safe base64, no special-character encoding nightmares)
+- Polls until provisioning completes (~90 sec — show the user what's happening so they know it's not stuck)
+- Fetches the URL + anon key + service_role key
+- Probes the pooler endpoint (us-east-1 vs us-west-2 etc.) to find the working one
+- Writes everything to `.env.local`
 
-When they paste:
-- If the string contains `[YOUR-PASSWORD]` literally, ask: "What's the database password you wrote down?"
-- URL-encode the password yourself (replace `#` with `%23`, `*` with `%2A`, `&` with `%26`, etc.)
-- Substitute it into the connection string.
+Pass `SUPABASE_PROJECT_NAME=...` and `SUPABASE_REGION=...` env vars if the user requested a different name or region. Common regions:
+- `us-east-1` (N. Virginia) — default, works for most US users
+- `us-west-2` (Oregon) — better for west coast
+- `eu-west-1` (Ireland) — better for EU users
+- `ap-southeast-1` (Singapore) — better for Asia
 
-> "Last one: I also need the **service role** key (it's a more powerful key, server-side only). Back in Project Settings → API → scroll down to 'Project API keys'. There should be one labeled 'service_role' (starts with `sb_secret_...`). Paste it here."
+After the script finishes, tell them: "Supabase is provisioned. Project URL is at https://<their-ref>.supabase.co. Dashboard is at https://supabase.com/dashboard/project/<their-ref>."
 
-Once you have all 4 values, **YOU write them to `.env.local`** using Write tool. Don't show the values back to them in chat — that re-leaks them. Just say: "Saved. Supabase is wired up."
+If the script fails, troubleshoot:
+- "Already exists" error: they have 2+ projects already on free tier (the limit). Tell them to either delete an unused project at supabase.com or pick a different free-tier organization.
+- "INIT_FAILED": rare. Wait 5 min and retry; sometimes Supabase has temporary issues.
+- Pooler probe fails: the project is still warming up. Wait 60 seconds and run the script again — it's idempotent for already-provisioned projects only if they pass the same token.
 
 #### OpenAI (chat + embeddings)
 

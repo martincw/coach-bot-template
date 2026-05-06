@@ -30,7 +30,7 @@ The `coach-bot-setup` skill will walk you through everything — Supabase + Open
 If you'd rather do it by hand:
 
 ### 1. Get accounts and keys
-- **Supabase** — sign up at supabase.com, create a new project, copy the URL + anon key + database connection string (transaction pooler, port 6543) + service role key
+- **Supabase** — sign up at supabase.com. Then go to https://supabase.com/dashboard/account/tokens and **generate one Personal Access Token** (starts with `sbp_`). That single token is all you need — `bun run provision-supabase` (step 4 below) will create the project and fetch all the keys for you.
 - **OpenAI** — generate an API key at platform.openai.com
 - **Vercel** — sign up at vercel.com (only needed at deploy time)
 
