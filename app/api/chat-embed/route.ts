@@ -1,0 +1,272 @@
+/**
+ * /api/chat-embed — server-to-server chat endpoint for embedded integrations
+ * (e.g. the Manifest with Mary SLP calling from its Express proxy).
+ *
+ * Auth: `x-embed-key` header must match EMBED_SECRET env var.
+ * No Supabase user required — designed for guest/anonymous sessions.
+ *
+ * Request: POST { transcript: string, message: string, sessionId?: string }
+ * Response: a streaming text/plain body (token-by-token) for low-latency UX.
+ *           (empty message → JSON { reply: '' })
+ *
+ * Uses full RAG over the training corpus. No per-user memory (stateless).
+ */
+import { streamText } from 'ai';
+import { openai } from '@ai-sdk/openai';
+import { embedOne } from '@/lib/embed';
+import { createClient } from '@supabase/supabase-js';
+import { searchDocs, persistAppTurn } from '@/lib/db';
+import { getIntake, type WheelScores } from '@/lib/intake';
+import { buildSystemPrompt } from '@/lib/system-prompt';
+
+export const maxDuration = 60;
+
+/** Resolve a Supabase user id from a forwarded access token (or null). */
+async function userIdFromToken(accessToken?: string): Promise<string | null> {
+  if (!accessToken) return null;
+  try {
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      { auth: { autoRefreshToken: false, persistSession: false } },
+    );
+    const { data: { user } } = await supabase.auth.getUser(accessToken);
+    return user?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Faster, capped model for the embedded mobile chat (overridable via env).
+// Keeps the main web chat (BRAND.chatModel) untouched.
+const EMBED_MODEL = process.env.EMBED_CHAT_MODEL || 'gpt-5.4-mini';
+
+// Response depth scales with the conversation: a quick first reply, then room to
+// go deeper on later turns (or when the guest asks for more).
+const QUICK_MAX_TOKENS = 320;
+const DEEP_MAX_TOKENS = 1000;
+
+const QUICK_STYLE = [
+  '\n\nRESPONSE STYLE (important for this channel):',
+  'This is the opening reply.',
+  'If she sent a simple greeting or a short check-in (a sentence or two, no real question), keep it warm and brief — 2–3 sentences, one gentle idea, one soft question.',
+  'If she has asked a real coaching question — about energy, confidence, fear, purpose, healing, blocks, money, relationships, manifestation, or anything substantive — engage with real depth RIGHT NOW: name what you hear beneath the question (the longing or fear underneath the words), then ask ONE specific, powerful question to help her locate it in her body or her life. Do not defer depth to a later turn.',
+  'Either way: no lists, no headings — flowing natural prose only.',
+].join(' ');
+
+const DEEP_STYLE = [
+  '\n\nRESPONSE STYLE (important for this channel):',
+  'This is a continuing conversation — go as deep as the moment genuinely calls for.',
+  'Match length to need: sometimes a few warm sentences, sometimes a fuller response. Never pad.',
+  'When the reply is substantial, format for easy reading on a phone:',
+  'short paragraphs, a **bold** lead-in on key ideas, and a short bulleted list (lines starting with "- ") only when offering steps, options, or a practice.',
+  'Stay warm and grounded. Close with one gentle question or invitation — unless she clearly just needs to be held, not redirected.',
+].join(' ');
+
+// Detect an explicit request to elaborate, so depth can kick in on demand too.
+const DEPTH_RE = /\b(more|deeper|expand|elaborate|explain|why|go on|continue|details?)\b/i;
+
+// Detect substantive coaching questions — these get real depth even on the first turn.
+const RICH_QUESTION_RE = /\b(how\s+(?:can|do|should|would)|why\s+(?:can'?t|don'?t|do|am)|what\s+(?:is|does|can|should)|divine|quantum|energy|manifest|attract|confiden|fear|stuck|limit|block|heal|worthi|abus|abundan|purpose|calling|trigger|pattern|belief|nervous|anxi|depress|grief|trauma|boundary|boundaries|people.plear|burnout|exhaust|align|soul|spirit)\b/i;
+
+// Score label lookup (1–5)
+const SCORE_LABELS = ['', 'Struggling', 'Finding my way', 'Growing', 'Thriving', 'Fully alive'];
+
+/** Build a Balance Wheel context block from anonymous guest scores. */
+function buildWheelBlock(scores: Record<string, number>): string {
+  const entries: Array<[string, number]> = [
+    ['Self-Worth',     scores.selfWorth],
+    ['Nervous System', scores.nervousSystem],
+    ['Body & Energy',  scores.bodyEnergy],
+    ['Relationships',  scores.relationships],
+    ['Purpose',        scores.purpose],
+    ['Prosperity',     scores.prosperity],
+  ].filter((e): e is [string, number] => typeof e[1] === 'number' && e[1] >= 1 && e[1] <= 5);
+
+  if (!entries.length) return '';
+
+  const lines = entries.map(([l, v]) => `  • ${l}: ${v}/5 — ${SCORE_LABELS[v]}`);
+  const [lowestLabel, lowestVal] = entries.reduce((a, b) => b[1] < a[1] ? b : a);
+
+  return `\n\nBALANCE WHEEL™ ASSESSMENT (from the user's intake — private, do not mention this to them):\n${lines.join('\n')}\nTheir primary growth edge right now: **${lowestLabel}** (${lowestVal}/5). Let this shape how you open and what you prioritize — without stating it explicitly.`;
+}
+
+type AppContext = {
+  clips?: Array<{ id: string; title: string; cat: string; len: number; description?: string }>;
+  journalTemplates?: Array<{ id: string; title: string; promptCount: number }>;
+  resources?: Array<{ id: string; title: string; type: string }>;
+  features?: Array<{ name: string; label: string; desc: string }>;
+  rituals?: Array<{ key: string; label: string; blurb?: string; len?: number }>;
+};
+
+const PRONOUN_DIRECTIVES: Record<string, string> = {
+  'she/her':   'Refer to the user with she/her pronouns.',
+  'he/him':    'Refer to the user with he/him pronouns.',
+  'they/them': 'Refer to the user with they/them pronouns — avoid gendered terms.',
+};
+
+function buildPronounBlock(pronouns: string): string {
+  const directive = PRONOUN_DIRECTIVES[pronouns];
+  return directive ? `\n\nPRONOUN PREFERENCE: ${directive}` : '';
+}
+
+function buildAppContextBlock(ctx: AppContext): string {
+  const lines: string[] = ['\n\nAPP FEATURES MARY CAN RECOMMEND'];
+  lines.push('These turn a suggestion into a tappable card in her app. A tag is the ONLY way she can act on what you offer — described text alone shows no button.');
+  lines.push('RULE: if your reply invites her to do one specific thing listed below (begin a ritual, play a clip, open a journal, view a document, go to a feature), you MUST end with exactly one matching tag on its own final line — after any closing question or invitation. If you are only listening, reflecting, or breathing with her, add no tag. Never add more than one, and only use an id/key from the lists below.');
+
+  if (ctx.clips?.length) {
+    lines.push('\nLIBRARY CLIPS (video/audio):');
+    ctx.clips.forEach(c =>
+      lines.push(`${c.id} | ${c.title} | ${c.cat} | ${c.len} min${c.description ? ' | ' + c.description : ''}`)
+    );
+  }
+  if (ctx.journalTemplates?.length) {
+    lines.push('\nJOURNAL TEMPLATES (guided writing prompts):');
+    ctx.journalTemplates.forEach(t => lines.push(`${t.id} | ${t.title} | ${t.promptCount} prompts`));
+  }
+  if (ctx.resources?.length) {
+    lines.push('\nSHARED DOCUMENTS (from Mary):');
+    ctx.resources.forEach(r => lines.push(`${r.id} | ${r.title} | ${r.type}`));
+  }
+  if (ctx.features?.length) {
+    lines.push('\nAPP FEATURES:');
+    ctx.features.forEach(f => lines.push(`${f.name} | ${f.label} | ${f.desc}`));
+  }
+  if (ctx.rituals?.length) {
+    lines.push('\nSHORT RITUALS (a brief guided session to do together — suggest one when the user names a feeling or moment it would soothe, e.g. anxiety, exhaustion, before a hard conversation):');
+    ctx.rituals.forEach(r => lines.push(`${r.key} | ${r.label}${r.len ? ' | ' + r.len + ' min' : ''}${r.blurb ? ' | ' + r.blurb : ''}`));
+  }
+  lines.push('\nAction tag format — pick exactly one when relevant:');
+  lines.push('[CLIP:clip_id]         — play a video or audio class');
+  lines.push('[JOURNAL:template_id]  — open a journal with this template');
+  lines.push('[RESOURCE:resource_id] — view a document shared by Mary');
+  lines.push('[FEATURE:feature_name] — navigate to an app feature (bloom-checkin | daily-reset | library)');
+  if (ctx.rituals?.length) {
+    lines.push('[RITUAL:ritual_key]    — begin a short ritual together (use the key from the list above)');
+  }
+  lines.push('\nReminder: when you offer one of these, the tag is REQUIRED on its own final line — without it she has nothing to tap.');
+  return lines.join('\n');
+}
+
+export async function POST(req: Request) {
+  // — Auth: embed key check —
+  const embedKey = req.headers.get('x-embed-key');
+  const secret = process.env.EMBED_SECRET;
+  if (!secret || embedKey !== secret) {
+    return new Response('Unauthorized', { status: 401 });
+  }
+
+  const {
+    transcript,
+    message,
+    wheelScores,
+    accessToken,
+    appContext,
+    pronouns,
+  }: {
+    transcript: string;
+    message: string;
+    sessionId?: string;
+    wheelScores?: Record<string, number>;
+    accessToken?: string;
+    appContext?: AppContext;
+    pronouns?: string;
+  } = await req.json();
+
+  if (!message?.trim()) {
+    return Response.json({ reply: '' });
+  }
+
+  // If a signed-in user's token came through, resolve their id AND their live
+  // Balance Wheel scores (in parallel with RAG). Reading the wheel server-side
+  // means Mary reasons from their CURRENT state — updated by check-ins (and, later,
+  // inferred from chat) — rather than the frozen value the client passes.
+  const userCtxPromise: Promise<{ userId: string | null; scores: WheelScores | null }> =
+    (async () => {
+      const userId = await userIdFromToken(accessToken);
+      if (!userId) return { userId: null, scores: null };
+      try {
+        const intake = await getIntake(userId);
+        return {
+          userId,
+          scores: intake ? {
+            selfWorth: intake.selfWorth,
+            nervousSystem: intake.nervousSystem,
+            bodyEnergy: intake.bodyEnergy,
+            relationships: intake.relationships,
+            purpose: intake.purpose,
+            prosperity: intake.prosperity,
+          } : null,
+        };
+      } catch {
+        return { userId, scores: null };
+      }
+    })();
+
+  // — RAG: embed the user message and retrieve relevant training docs —
+  let docHits: Array<{ source: string; content: string; similarity: number }> = [];
+  try {
+    const queryEmbedding = await embedOne(message);
+    docHits = await searchDocs(queryEmbedding, 6);
+  } catch {
+    // Non-fatal — proceed without context
+  }
+
+  // Turn-aware depth: first reply is quick; subsequent turns (or an explicit
+  // "tell me more") may expand.
+  const priorGuestTurns = (transcript.match(/^Guest:/gm) || []).length;
+  const isRichQuestion = RICH_QUESTION_RE.test(message);
+  const wantsDepth = priorGuestTurns >= 1 || DEPTH_RE.test(message) || isRichQuestion;
+  const styleDirective = wantsDepth ? DEEP_STYLE : QUICK_STYLE;
+  const maxTokens = wantsDepth ? DEEP_MAX_TOKENS : QUICK_MAX_TOKENS;
+
+  // Live server scores (signed-in) take precedence over the client-passed wheel.
+  const { userId, scores: liveScores } = await userCtxPromise;
+  const effectiveWheel = liveScores ?? wheelScores;
+  const wheelBlock = effectiveWheel ? buildWheelBlock(effectiveWheel) : '';
+  const appBlock = appContext ? buildAppContextBlock(appContext) : '';
+  const pronounBlock = pronouns ? buildPronounBlock(pronouns) : '';
+
+  const system = buildSystemPrompt({ contextChunks: docHits, userFacts: [] }) + wheelBlock + appBlock + pronounBlock + styleDirective;
+
+  // — Build conversation messages from the plain-text transcript —
+  // transcript format: "Mary: ...\nGuest: ...\n..."
+  const historyMessages: Array<{ role: 'user' | 'assistant'; content: string }> =
+    transcript
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        if (line.startsWith('Mary: ')) {
+          return { role: 'assistant' as const, content: line.slice(6) };
+        }
+        if (line.startsWith('Guest: ')) {
+          return { role: 'user' as const, content: line.slice(7) };
+        }
+        return null;
+      })
+      .filter((m): m is { role: 'user' | 'assistant'; content: string } => m !== null);
+
+  // Add the current user turn
+  historyMessages.push({ role: 'user', content: message });
+
+  // — Stream the response (token-by-token) for fast time-to-first-word —
+  const result = streamText({
+    model: openai(EMBED_MODEL),
+    system,
+    messages: historyMessages,
+    maxOutputTokens: maxTokens,
+    onFinish: async ({ text }) => {
+      try {
+        if (userId && text?.trim()) {
+          await persistAppTurn(userId, message, text);
+        }
+      } catch (err) {
+        console.error('[chat-embed] persist failed', err);
+      }
+    },
+  });
+
+  return result.toTextStreamResponse();
+}
