@@ -67,22 +67,24 @@ export function Sidebar({ chats, email }: { chats: ChatListItem[]; email: string
         New chat
       </Link>
 
-      <a
-        href={BRAND.dashboardUrl}
-        style={{
-          display: 'block',
-          padding: '10px 14px',
-          textAlign: 'center',
-          fontSize: 14,
-          color: '#111',
-          textDecoration: 'none',
-          border: '1px solid #e0e0e0',
-          borderRadius: 10,
-          background: '#fff',
-        }}
-      >
-        Back to Dashboard
-      </a>
+      {BRAND.dashboardUrl && (
+        <a
+          href={BRAND.dashboardUrl}
+          style={{
+            display: 'block',
+            padding: '10px 14px',
+            textAlign: 'center',
+            fontSize: 14,
+            color: '#111',
+            textDecoration: 'none',
+            border: '1px solid #e0e0e0',
+            borderRadius: 10,
+            background: '#fff',
+          }}
+        >
+          Back to Dashboard
+        </a>
+      )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, overflowY: 'auto', flex: 1 }}>
         <div

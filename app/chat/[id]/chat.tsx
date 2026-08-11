@@ -532,6 +532,23 @@ function GradientGlow() {
 }
 
 function Logo() {
+  if (!BRAND.logoSrc) {
+    return (
+      <div
+        style={{
+          fontFamily: 'Georgia, "Times New Roman", serif',
+          fontSize: 'clamp(48px, 8vw, 84px)',
+          fontWeight: 600,
+          color: '#c8a25f',
+          letterSpacing: '0.02em',
+          textAlign: 'center',
+          lineHeight: 1.1,
+        }}
+      >
+        {BRAND.name}
+      </div>
+    );
+  }
   return (
     /* eslint-disable-next-line @next/next/no-img-element */
     <img

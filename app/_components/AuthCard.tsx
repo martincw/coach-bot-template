@@ -56,12 +56,28 @@ export function AuthCard({ mode, nextPath }: { mode: 'login' | 'signup'; nextPat
       }}
     >
       <div style={{ width: '100%', maxWidth: 400, position: 'relative' }}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={BRAND.logoSrc}
-          alt={BRAND.name}
-          style={{ width: 'min(280px, 70%)', height: 'auto', display: 'block', margin: '0 auto 24px' }}
-        />
+        {BRAND.logoSrc ? (
+          /* eslint-disable-next-line @next/next/no-img-element */
+          <img
+            src={BRAND.logoSrc}
+            alt={BRAND.name}
+            style={{ width: 'min(280px, 70%)', height: 'auto', display: 'block', margin: '0 auto 24px' }}
+          />
+        ) : (
+          <div
+            style={{
+              fontFamily: 'Georgia, "Times New Roman", serif',
+              fontSize: 36,
+              fontWeight: 600,
+              color: '#c8a25f',
+              letterSpacing: '0.02em',
+              textAlign: 'center',
+              margin: '0 auto 24px',
+            }}
+          >
+            {BRAND.name}
+          </div>
+        )}
         <h1 style={{ textAlign: 'center', fontSize: 22, fontWeight: 600, margin: '0 0 24px' }}>
           {mode === 'login' ? BRAND.loginHeading : BRAND.signupHeading}
         </h1>

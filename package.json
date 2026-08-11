@@ -9,7 +9,8 @@
     "lint": "next lint",
     "ingest": "tsx scripts/ingest.ts",
     "transcribe": "tsx scripts/transcribe.ts",
-    "db:init": "tsx scripts/init-supabase.ts"
+    "db:init": "bun scripts/init-supabase.ts",
+    "provision-supabase": "tsx scripts/provision-supabase.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^2.0.0",
